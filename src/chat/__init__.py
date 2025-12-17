@@ -1,0 +1,2 @@
+# Chat Manager Module
+

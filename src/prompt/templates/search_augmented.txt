@@ -1,0 +1,8 @@
+You are a helpful, harmless, and honest assistant.
+
+Use the following search results to help answer the user's question.
+If the search results don't contain relevant information, say so honestly.
+
+Search Results:
+{search_results}
+

@@ -265,7 +265,41 @@ Request
 
 ## 현재 상태
 
-**진행 중:** 5단계 완료, 6단계 시작 준비
+**진행 중:** 7단계(테이블 조회) 진행
+
+---
+
+## 6-추가단계 - PostgreSQL 연결 (step6, 기존 SQLite 유지)
+
+- [x] `src/database/db_postgres.py` 추가 (PostgreSQL 전용 연결 모듈)
+- [x] `step6_postgresql.md` 추가 (docker-compose 메모 포함)
+- [x] `step6_init_db_postgres.py` 추가 (PostgreSQL 테이블 생성)
+- [x] `step6_chat_with_postgres_interactive.py` 추가 (PostgreSQL 저장/로드 챗)
+- [x] `psycopg2-binary` 설치/적용
+
+**사용한/사용할 명령어:**
+```bash
+# 드라이버 설치
+./venv/bin/pip install psycopg2-binary
+
+# Postgres 테이블 생성
+./venv/bin/python step6_init_db_postgres.py
+
+# Postgres 챗 실행
+./venv/bin/python step6_chat_with_postgres_interactive.py
+```
+
+---
+
+## 7-추가단계 - PostgreSQL 테이블 조회 (step7, SELECT-only)
+
+- [ ] `src/tools/db_query_tool.py` 구현 (SELECT/CTE만 실행)
+- [ ] `step7_chat_with_postgres_db_query_tool.py` 구현 (자연어→SQL→실행→답변)
+
+**사용할 명령어:**
+```bash
+./venv/bin/python step7_chat_with_postgres_db_query_tool.py
+```
 
 **완료된 작업:**
 - ✅ 프로젝트 초기화 (가상환경, 디렉토리 구조, 패키지 설치)

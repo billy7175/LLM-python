@@ -265,7 +265,7 @@ Request
 
 ## 현재 상태
 
-**진행 중:** 7단계(테이블 조회) 진행
+**진행 중:** 7-추가단계(테이블 조회) 고도화 진행 (query vs transform)
 
 ---
 
@@ -293,12 +293,23 @@ Request
 
 ## 7-추가단계 - PostgreSQL 테이블 조회 (step7, SELECT-only)
 
-- [ ] `src/tools/db_query_tool.py` 구현 (SELECT/CTE만 실행)
-- [ ] `step7_chat_with_postgres_db_query_tool.py` 구현 (자연어→SQL→실행→답변)
+- [x] `src/tools/db_query_tool.py` 구현 (SELECT/CTE만 실행)
+- [x] `step7_chat_with_postgres_db_query_tool.py` 구현 (자연어→SQL→실행→답변)
+- [x] 후속 질문 처리 고도화: LLM이 JSON으로 `query` vs `transform` 선택 (필터/조건은 query 우선)
+- [x] 출력 가시성 개선(A안): 실행 SQL + 표 형태 RESULT + LLM 요약을 함께 출력
 
-**사용할 명령어:**
+**사용한 명령어:**
 ```bash
 ./venv/bin/python step7_chat_with_postgres_db_query_tool.py
+
+# 스모크 테스트(비대화형)
+printf "가입자 정보 알려줘\n이름만 정리해서 나열해줘\n이 이름이 홍길동인 유저\nquit\n" | ./venv/bin/python step7_chat_with_postgres_db_query_tool.py
+
+# Git(기록용)
+git status --porcelain=v1
+git diff --stat
+git add PROGRESS.md src/tools/db_query_tool.py step7_chat_with_postgres_db_query_tool.py
+git commit -m "step7: json routing + sql/result visibility"
 ```
 
 **완료된 작업:**

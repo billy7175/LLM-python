@@ -1,17 +1,16 @@
 """
-Step 7: PostgreSQL + DB 테이블 조회 (자연어 → SQL → 실행 → 결과 기반 답변)
+Step 7: PostgreSQL + DB 테이블 조회 (자연어 → (query|transform) → 실행/가공 → 답변)
 
-개발 단계 목표:
-- "성적이 80점 아래인 사람들 조회해", "서비스 가입 수 알려줘" 같은 요청을
-  PostgreSQL에서 SELECT로 조회하고 결과를 기반으로 답변한다.
-
-중요:
-- 기존 SQLite 기반 step들은 그대로 둔다.
-- step7은 step6의 PostgreSQL 연결(`src/database/db_postgres.py`)을 사용한다.
-- 안전을 위해 SQL은 SELECT/CTE(WITH)만 실행한다. (DELETE/DROP 등 차단)
+목표(현업 기준에 더 가깝게):
+- 사용자 입력을 매번 "query(DB 재조회)" 또는 "transform(직전 결과 가공)"으로 분기한다.
+- 분기는 LLM이 **JSON으로 명시적으로 결정**한다. (query vs transform)
+- query는 SELECT-only로 실행하고, transform은 직전 결과를 가공한다.
 """
 
-from typing import List, Optional
+import json
+import re
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 
@@ -23,6 +22,7 @@ from src.tools.db_query_tool import (
     QueryResult,
     extract_first_sql_statement,
     is_safe_select_sql,
+    make_count_sql_from_select,
 )
 
 
@@ -38,39 +38,44 @@ NO_SQL
 """
 
 
-ANSWER_SYSTEM_PROMPT = """You are a helpful assistant.
-Answer using the provided database query results only.
-If the result is empty, say so.
-If the question cannot be answered from the results, say you cannot answer from the results.
+ANSWER_SYSTEM_PROMPT = """당신은 도움이 되는 어시스턴트입니다.
+아래 제공된 DB 조회 결과(DB_RESULT)만 근거로 답변하세요.
+- 결과가 비어있으면 "결과가 없습니다"라고 말하세요.
+- 결과만으로 답을 확정할 수 없으면 "DB 결과만으로는 답변할 수 없습니다"라고 말하세요.
+- 가능한 한 한국어로 간결하게 답변하세요.
 """
+
+
+ROUTER_SYSTEM_PROMPT = """당신은 DB 질의 라우터입니다.
+사용자 요청을 보고 아래 중 하나를 JSON으로 선택하세요.
+
+1) query: DB를 다시 조회해야 하는 경우 (필터/조건/집계/정확한 카운트/새로운 조건 추가)
+2) transform: 직전 DB 결과를 가공하면 되는 경우 (표현 변경, 특정 컬럼만 보기, 직전 결과의 개수 등)
+
+출력은 반드시 JSON 1개만. 다른 텍스트 금지.
+
+JSON 스키마:
+- query:
+  {"action":"query"}
+- transform (컬럼만 보기):
+  {"action":"transform","operation":"pick_column","column":"name"}
+- transform (직전 결과 기반 개수):
+  {"action":"transform","operation":"count_last"}
+
+규칙(중요):
+- "…인/…아래/…이상/…미만/…같은" 등 조건/필터가 있으면 query가 우선입니다.
+- "이름만/이메일만/ID만"처럼 출력만 바꾸는 요청이면 transform이 우선입니다.
+"""
+
+
+@dataclass
+class RouteDecision:
+    action: str  # "query" | "transform"
+    operation: Optional[str] = None  # for transform
+    column: Optional[str] = None  # for transform pick_column
 
 def _normalize_col_name(name: str) -> str:
     return (name or "").strip().lower()
-
-
-def _infer_requested_columns(user_request: str) -> List[str]:
-    """
-    후속 요청에서 사용자가 원하는 컬럼을 간단히 추론합니다.
-    예) "이름만" -> ["name"], "이메일만" -> ["email"]
-    """
-    txt = (user_request or "").strip().lower()
-    cols: List[str] = []
-
-    # 한국어/영어 간단 매핑
-    mapping = {
-        "이름": "name",
-        "name": "name",
-        "메일": "email",
-        "이메일": "email",
-        "email": "email",
-        "id": "id",
-    }
-
-    for k, v in mapping.items():
-        if k in txt and v not in cols:
-            cols.append(v)
-
-    return cols
 
 
 def _format_single_column_list(values: List[object], prefix: str = "- ") -> str:
@@ -85,6 +90,76 @@ def _format_single_column_list(values: List[object], prefix: str = "- ") -> str:
     if not cleaned:
         return "(0 rows)"
     return "\n".join([f"{prefix}{v}" for v in cleaned])
+
+def _extract_json_object(text_out: str) -> Optional[Dict[str, Any]]:
+    """
+    LLM 출력에서 JSON object를 최대한 추출합니다.
+    """
+    if not text_out:
+        return None
+    s = text_out.strip()
+    # 코드펜스 제거
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", s, flags=re.IGNORECASE)
+    if m:
+        s = m.group(1).strip()
+
+    # 첫 { ... } 블록을 찾아 파싱 시도
+    start = s.find("{")
+    end = s.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    candidate = s[start : end + 1]
+    try:
+        return json.loads(candidate)
+    except Exception:
+        return None
+
+
+def _route_action(
+    llm: OllamaProvider,
+    user_request: str,
+    last_result: Optional[QueryResult],
+    last_sql: Optional[str],
+) -> RouteDecision:
+    """
+    현업식(가까운) 분기: LLM이 JSON으로 query/transform을 명시.
+    """
+    last_cols = []
+    last_rows = 0
+    if last_result is not None:
+        last_cols = last_result.columns
+        last_rows = len(last_result.rows)
+
+    messages = [
+        {
+            "role": "system",
+            "content": ROUTER_SYSTEM_PROMPT
+            + "\n\n"
+            + "Context:\n"
+            + f"- last_sql_present: {bool(last_sql)}\n"
+            + f"- last_result_rows: {last_rows}\n"
+            + f"- last_result_columns: {last_cols}\n",
+        },
+        {"role": "user", "content": user_request},
+    ]
+    raw = llm.generate(messages, temperature=0.0)
+    obj = _extract_json_object(raw or "")
+
+    action = (obj or {}).get("action", "query")
+    operation = (obj or {}).get("operation")
+    column = (obj or {}).get("column")
+
+    if action not in ("query", "transform"):
+        action = "query"
+
+    # 최소 안전장치: 필터/조건처럼 보이는 문장은 query 우선(LLM 오판 방지)
+    cond_hints = ("인 ", "인유저", "인 사용자", "아래", "이상", "미만", "같은", "where", "=")
+    if action == "transform" and any(h in user_request for h in cond_hints):
+        action = "query"
+        operation = None
+        column = None
+
+    return RouteDecision(action=action, operation=operation, column=column)
 
 
 def _generate_sql(llm: OllamaProvider, schema_text: str, user_request: str) -> str:
@@ -122,6 +197,17 @@ def _final_answer(llm: OllamaProvider, user_request: str, sql: Optional[str], re
     ]
     return llm.generate(messages, temperature=0.2).strip()
 
+def _extract_table_name_from_korean_question(text: str) -> Optional[str]:
+    """
+    예) "users 테이블 있어?" -> "users"
+    """
+    if not text:
+        return None
+    m = re.search(r"([a-zA-Z_][a-zA-Z0-9_]*)\s*테이블", text)
+    if not m:
+        return None
+    return m.group(1)
+
 
 def main():
     load_dotenv()
@@ -144,34 +230,27 @@ def main():
     llm = OllamaProvider()
 
     # 스키마 요약 (초기 1회)
-    schema_text = tool.schema_summary_text(schema="public", max_tables=30, max_cols_per_table=25)
+    schema_text = tool.schema_summary_text(schema="public", max_tables=60, max_cols_per_table=25)
     last_result: Optional[QueryResult] = None
     last_sql: Optional[str] = None
 
     while True:
         user_input = input("\n[당신]: ").strip()
         if user_input.lower() in ["quit", "exit", "종료", "q"]:
-            print("\n👋 안녕히가세요!")
+            print("\n안녕히가세요!")
             break
         if not user_input:
             continue
 
-        # 후속 질문: 직전 DB 결과에서 "특정 컬럼만" 뽑아달라는 요청 처리
-        # 예) "이름만 정리해서 나열해줘"
-        requested_cols = _infer_requested_columns(user_input)
-        if last_result is not None and requested_cols:
-            cols_lower = [_normalize_col_name(c) for c in last_result.columns]
-            # 요청한 컬럼이 직전 결과에 포함되면 DB 재조회 없이 바로 응답
-            hit = [c for c in requested_cols if c in cols_lower]
-            if hit:
-                # 우선 첫 번째 요청 컬럼만 처리 (개발 단계 단순화)
-                col = hit[0]
-                idx = cols_lower.index(col)
-                values = [row[idx] for row in last_result.rows]
-                answer_text = _format_single_column_list(values)
-                print(f"\n[봇]:\n{answer_text}")
-                memory_manager.save_message(conversation.id, "assistant", answer_text)
-                continue
+        # 스키마 질문: "<table> 테이블 있어?"는 LLM을 거치지 않고 information_schema 기반으로 즉시 응답
+        table_name = _extract_table_name_from_korean_question(user_input)
+        if table_name and ("있어" in user_input or "존재" in user_input):
+            tables = tool.list_tables(schema="public", limit=500)
+            exists = table_name in tables
+            msg = f"{'있습니다' if exists else '없습니다'}. (public.{table_name})"
+            print(f"\n[봇]: {msg}")
+            memory_manager.save_message(conversation.id, "assistant", msg)
+            continue
 
         # 메타 질문(“DB 조회 가능해?”)은 DB 실행 없이 안내만 제공
         lowered = user_input.replace(" ", "").lower()
@@ -188,8 +267,76 @@ def main():
         # 사용자 메시지 저장
         memory_manager.save_message(conversation.id, "user", user_input)
 
+        # 라우팅: query vs transform (LLM JSON)
+        route = _route_action(llm, user_input, last_result=last_result, last_sql=last_sql)
+
+        # transform 처리
+        if route.action == "transform":
+            if route.operation == "count_last":
+                if last_sql:
+                    try:
+                        count_sql = make_count_sql_from_select(last_sql)
+                        result = tool.run_select(count_sql, max_rows=5)
+                        result_text = tool.format_result(result)
+                        print("\n[SQL]")
+                        print(count_sql)
+                        print("\n[RESULT]")
+                        print(result_text)
+                        answer = _final_answer(llm, user_input, sql=count_sql, result_text=result_text)
+                        print(f"\n[봇]: {answer}")
+                        last_result = result
+                        last_sql = count_sql
+                        memory_manager.save_message(conversation.id, "assistant", answer)
+                        continue
+                    except Exception as e:
+                        answer = _final_answer(llm, user_input, sql=last_sql, result_text=f"(COUNT 변환 실패: {e})")
+                        print(f"\n[봇]: {answer}")
+                        memory_manager.save_message(conversation.id, "assistant", answer)
+                        continue
+                if last_result is not None:
+                    answer_text = f"직전 결과 기준 {len(last_result.rows)}개입니다."
+                    print(f"\n[봇]: {answer_text}")
+                    memory_manager.save_message(conversation.id, "assistant", answer_text)
+                    continue
+
+            if route.operation == "pick_column":
+                if last_result is None:
+                    # 직전 결과가 없으면 query로 폴백
+                    route = RouteDecision(action="query")
+                else:
+                    cols_lower = [_normalize_col_name(c) for c in last_result.columns]
+                    col = (route.column or "").strip().lower()
+                    # LLM이 한국어로 컬럼을 내보내는 경우를 최소 보정
+                    col_alias = {
+                        "이름": "name",
+                        "성명": "name",
+                        "메일": "email",
+                        "이메일": "email",
+                        "아이디": "id",
+                    }
+                    col = col_alias.get(col, col)
+                    if not col:
+                        col = "name"
+                    if col not in cols_lower:
+                        # 못 찾으면 query로 폴백
+                        route = RouteDecision(action="query")
+                    else:
+                        idx = cols_lower.index(col)
+                        values = [row[idx] for row in last_result.rows]
+                        answer_text = _format_single_column_list(values)
+                        print("\n[TRANSFORM]")
+                        print(f"operation=pick_column column={col} (DB 재조회 없음)")
+                        print(f"\n[봇]:\n{answer_text}")
+                        memory_manager.save_message(conversation.id, "assistant", answer_text)
+                        continue
+
         # 1) SQL 생성
-        raw_sql = _generate_sql(llm, schema_text=schema_text, user_request=user_input)
+        # 후속 요청일 가능성이 있으면 이전 SQL을 힌트로 제공(재가공/재조회 유도)
+        hint = ""
+        if last_sql:
+            hint = f"\n\nPrevious SQL (for follow-up context):\n{last_sql}\n"
+
+        raw_sql = _generate_sql(llm, schema_text=schema_text + hint, user_request=user_input)
         sql = extract_first_sql_statement(raw_sql)
 
         # 추출 결과가 없으면 NO_SQL 취급
@@ -246,6 +393,10 @@ def main():
             continue
 
         # 3) 결과 기반 답변
+        print("\n[SQL]")
+        print(sql)
+        print("\n[RESULT]")
+        print(result_text)
         answer = _final_answer(llm, user_input, sql=sql, result_text=result_text)
         print(f"\n[봇]: {answer}")
 

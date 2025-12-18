@@ -36,6 +36,47 @@ _BANNED_KEYWORDS = (
     "do",
 )
 
+_COUNT_HINT_KEYWORDS = (
+    "count",
+    "how many",
+    "몇명",
+    "몇 명",
+    "몇개",
+    "몇 개",
+    "개수",
+    "수량",
+    "총",
+)
+
+
+def strip_trailing_limit(sql: str) -> str:
+    """
+    SQL 끝에 붙은 LIMIT 절을 단순 제거합니다.
+    (정교한 파서가 아닌 개발용 유틸)
+    """
+    if not sql:
+        return ""
+    s = sql.strip().rstrip(";").strip()
+    # 마지막 LIMIT n 제거 (단순 패턴)
+    s = re.sub(r"\s+limit\s+\d+\s*$", "", s, flags=re.IGNORECASE)
+    return s.strip()
+
+
+def make_count_sql_from_select(select_sql: str) -> str:
+    """
+    기존 SELECT를 서브쿼리로 감싸 COUNT(*)로 바꿉니다.
+    """
+    base = strip_trailing_limit(select_sql)
+    return f"SELECT COUNT(*) AS count FROM (\n{base}\n) AS t"
+
+
+def looks_like_count_request(user_text: str) -> bool:
+    if not user_text:
+        return False
+    t = user_text.strip().lower()
+    return any(k in t for k in _COUNT_HINT_KEYWORDS)
+
+
 def extract_first_sql_statement(llm_output: str) -> str:
     """
     LLM 출력에서 실행 가능한 "첫 번째 SQL(SELECT/WITH)"만 최대한 추출합니다.

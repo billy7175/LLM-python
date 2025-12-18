@@ -3,7 +3,7 @@ requests>=2.31.0  # Ollama HTTP API 호출용
 
 # 데이터베이스
 sqlalchemy>=2.0.0
-# psycopg2-binary>=2.9.0  # PostgreSQL 사용 시 주석 해제
+psycopg2-binary>=2.9.0  # PostgreSQL 사용 시 필요 (step6)
 
 # 검색 기능
 duckduckgo-search>=4.0.0

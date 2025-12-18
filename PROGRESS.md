@@ -4,6 +4,28 @@
 
 ---
 
+## Collaboration Rules (Read this first)
+
+These rules exist to **avoid wasting the user’s time** and to prevent accidental repo/DB damage.
+
+- **No action without explicit approval**
+  - I will **NOT** run terminal commands, edit files, create/delete files, or perform any git operation unless you explicitly say **“OK / do it / proceed”**.
+- **Pre-action message (1 line, always)**
+  - Before doing anything, I will post **one line**:
+    - **Goal** + **exact command(s)** / **exact file(s) to change**
+- **Test before commit**
+  - Default workflow (unless you say otherwise):
+    - **Smoke test → show results → you approve → commit**
+- **Git safety**
+  - **No history rewrites** (no `git reset --hard`, no `rebase`, no force-push) unless you explicitly request it and confirm you understand it can discard work.
+  - **No pushing** unless you explicitly request it.
+- **No guessing**
+  - I will not guess ports, DB credentials, remote URLs, branch names, or “which account” settings. I will ask.
+- **Minimal output**
+  - I will keep answers short and actionable, and only expand explanations if you ask.
+
+---
+
 ## 0단계 - 환경 고정
 
 ### 0-1. LLM 서버 구동 확인

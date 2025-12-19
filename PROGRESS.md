@@ -263,6 +263,28 @@ Request
 
 ---
 
+## 8-추가단계 - LangChain + 외부 검색(Web Search, 키 없음 / DuckDuckGo)
+
+- [x] `step8_langchain_web_search_agent.py` 추가 (LangChain + DuckDuckGo 검색 Tool, 키 없이)
+- [x] Step8 무한 루프 방지: 기본을 Chain(1회 검색→요약)으로 변경, Agent 모드는 옵션 + iteration/time 제한
+- [ ] (선택) LangChain Agent에 DBQueryTool 결합 (DB + Web 멀티툴)
+
+**사용한/사용할 명령어:**
+```bash
+# 패키지 설치
+./venv/bin/pip install -r requirements.txt
+
+# Step8 실행
+./venv/bin/python step8_langchain_web_search_agent.py
+
+# 스모크 테스트(비대화형)
+cat <<'EOF' | ./venv/bin/python step8_langchain_web_search_agent.py
+오늘 한국 기준 USD/KRW 환율 대략 얼마야? 출처도 같이.
+최신 파이썬 안정 버전 뭐야? 출처 포함.
+quit
+EOF
+```
+
 ## 현재 상태
 
 **진행 중:** 7-추가단계(테이블 조회) 고도화 진행 (query vs transform)

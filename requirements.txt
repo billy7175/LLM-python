@@ -8,6 +8,12 @@ psycopg2-binary>=2.9.0  # PostgreSQL 사용 시 필요 (step6)
 # 검색 기능
 duckduckgo-search>=4.0.0
 
+# LangChain (step8: 키 없이 외부 검색 Tool)
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-community>=0.2.0
+langchain-ollama>=0.2.0
+
 # 환경 변수 관리
 python-dotenv>=1.0.0
 

@@ -7,6 +7,7 @@
 """
 
 from src.llm.ollama_provider import OllamaProvider
+import time
 
 
 def main():
@@ -44,7 +45,9 @@ def main():
             print("\n[LLM]: ", end="", flush=True)
             
             # 이전 대화 기록을 모두 포함하여 LLM 호출
+            start_time = time.perf_counter()
             response = provider.generate(conversation_history, temperature=0.7)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
             
             # LLM 응답을 대화 기록에 추가
             conversation_history.append({
@@ -54,6 +57,7 @@ def main():
             
             # 응답 출력
             print(response)
+            print(f"[속도] {elapsed_ms:.0f} ms ({elapsed_ms / 1000:.2f}s)")
             
         except KeyboardInterrupt:
             print("\n\n👋 안녕히가세요!")

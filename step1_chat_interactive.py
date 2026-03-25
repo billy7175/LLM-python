@@ -6,6 +6,7 @@
 """
 
 from src.llm.ollama_provider import OllamaProvider
+import time
 
 
 def main():
@@ -14,6 +15,7 @@ def main():
     print("로컬 LLM 챗 (기억 없음 - 매번 독립적)")
     print("종료하려면 'quit' 또는 'exit' 입력")
     print("=" * 60)
+    print("[봇]: 안녕하세요! 반가워요 😊 무엇을 도와드릴까요?")
     
     # Provider 생성
     provider = OllamaProvider(model="llama3")
@@ -36,13 +38,16 @@ def main():
                 {"role": "user", "content": user_input}
             ]
             
-            print("\n[LLM]: ", end="", flush=True)
+            print("\n[봇]: ", end="", flush=True)
             
             # LLM 호출
+            start_time = time.perf_counter()
             response = provider.generate(messages, temperature=0.7)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
             
             # 응답 출력
             print(response)
+            print(f"[속도] {elapsed_ms:.0f} ms ({elapsed_ms / 1000:.2f}s)")
             
         except KeyboardInterrupt:
             print("\n\n👋 안녕히가세요!")

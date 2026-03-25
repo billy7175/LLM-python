@@ -1,6 +1,7 @@
 """Ollama Provider 테스트 스크립트"""
 
 import sys
+import time
 from src.llm.ollama_provider import OllamaProvider
 
 
@@ -19,9 +20,12 @@ def test_ollama():
     
     try:
         print("Sending request to Ollama...")
+        start_time = time.perf_counter()
         response = provider.generate(messages, temperature=0.7)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
         
         print("\n✅ Success!")
+        print(f"⏱️ Elapsed: {elapsed_ms:.0f} ms")
         print("\nResponse:")
         print("-" * 50)
         print(response)
